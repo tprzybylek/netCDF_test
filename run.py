@@ -168,6 +168,7 @@ for filepath in filepaths:
             vals_units = ds.variables['ozone_total_vertical_column'].units
             output_attributes['sensing_date'] = file_attributes[10]
 
+        # TODO: Change to os.path
         new_filename = output_dir + '\\' \
             + output_attributes['platform'] \
             + '_' + output_attributes['product_type'] \
