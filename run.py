@@ -6,13 +6,6 @@ import csv
 from osgeo import gdal, osr
 import struct
 
-# Unused imports:
-# from PIL import Image
-# from matplotlib import pyplot as plt
-# from geographiclib.geodesic import Geodesic
-# import math
-# import itertools
-
 
 def clip_masked_array(arr):
     si, se = np.where(~arr.mask)
