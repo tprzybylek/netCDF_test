@@ -6,6 +6,44 @@ import copy
 import geopy.distance
 
 
+def read_cities_list():
+    pass
+
+
+def aggregate_cities(break_values, cities_list):
+    """
+    Deletes smaller cities around bigger cities. It takes break values from a list of lists or tuples in
+    [population limit, distance limit] format.
+
+    :param break_values:
+    :param cities_list:
+    :return:
+    """
+
+    cities_list.sort(key=lambda tup: tup[3], reverse=True)
+
+    for break_value in break_values:
+        print('\n\033[94mPopulation break:\033[0m', break_value[0], '\033[94mDistance break:\033[0m', break_value[1])
+        for bigger_city in cities_list:
+            if bigger_city[3] > break_value[0]:
+                bigger_city_coordinates = (bigger_city[4], bigger_city[5])
+                bigger_city_name = bigger_city[1]
+                cities_list_copy = copy.copy(cities_list)
+
+                for city in cities_list_copy:
+                    city_coordinates = (city[4], city[5])
+                    city_name = city[1]
+                    distance = geopy.distance.geodesic(bigger_city_coordinates, city_coordinates).km
+
+                    if distance < break_value[1] and city_name != bigger_city_name:
+                        print(bigger_city[0], bigger_city[1], city[1], distance)
+                        cities_list.remove(city)
+
+        print('\033[94mNumber of cities:\033[0m', len(cities))
+
+    return cities_list
+
+
 def write_csv(filename, cities_list):
     """
     Saves a list of cities in [country code, city name in UTF-8, city name in ASCII,
@@ -60,40 +98,6 @@ def write_geojson(filename, cities_list):
         json.dump(cities_json, json_file)
 
 
-def aggregate_cities(break_values, cities_list):
-    """
-    Deletes smaller cities around bigger cities. It takes break values from a list of lists or tuples in
-    [population limit, distance limit] format.
-
-    :param break_values:
-    :param cities_list:
-    :return:
-    """
-
-    cities_list.sort(key=lambda tup: tup[3], reverse=True)
-
-    for break_value in break_values:
-        print('\nPopulation break:', break_value[0], 'Distance break:', break_value[1])
-        for bigger_city in cities_list:
-            if bigger_city[3] > break_value[0]:
-                bigger_city_coordinates = (bigger_city[4], bigger_city[5])
-                bigger_city_name = bigger_city[1]
-                cities_list_copy = copy.copy(cities_list)
-
-                for city in cities_list_copy:
-                    city_coordinates = (city[4], city[5])
-                    city_name = city[1]
-                    distance = geopy.distance.geodesic(bigger_city_coordinates, city_coordinates).km
-
-                    if distance < break_value[1] and city_name != bigger_city_name:
-                        print(bigger_city[0], bigger_city[1], city[1], distance)
-                        cities_list.remove(city)
-
-        print('### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ###')
-
-    return cities_list
-
-
 start = time.time()
 
 country_codes = {
@@ -137,8 +141,9 @@ country_codes = {
     'Russia': 'RU',
 }
 breaks = [
-    (750000, 100.0),
-    (500000, 75.0),
+    (1000000, 50.0),
+    (750000, 50.0),
+    (500000, 50.0),
     (250000, 50.0),
     (100000, 50.0),
     (75000, 50.0),
@@ -146,7 +151,7 @@ breaks = [
 
 cities = []
 
-# cities15000.txt file from the GeoNames project
+# cities15000.txt a file from the GeoNames project
 # https://www.geonames.org/
 # http://download.geonames.org/export/dump/
 with open('source/cities15000.txt', encoding='utf-8') as csv_file:
@@ -161,4 +166,4 @@ write_geojson('cities.json', cities)
 write_csv('cities.csv', cities)
 
 elapsed = (time.time() - start)
-print('\nElapsed time:', str(timedelta(seconds=elapsed)))
+print('\033[92m Elapsed time:\033[0m', str(timedelta(seconds=elapsed)))
