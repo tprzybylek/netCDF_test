@@ -6,6 +6,7 @@ import csv
 from osgeo import gdal, osr
 import struct
 
+# METADATA/EOP_METADATA/om:featureOfInterest/eop:multiExtentOf/gml:surfaceMembers/gml:exterior/:gml:posList
 
 def clip_masked_array(arr):
     si, se = np.where(~arr.mask)
@@ -122,7 +123,7 @@ requested_bbox = {'max_lon': 17.50,
                   'min_lat': 50.50}
 
 current_dir = 'D:\\'
-# current_dir = os.path.dirname(os.path.abspath(__file__))  # Use if images are in 'data' directory in the local dir
+# current_dir = os.path.dirname(os.path.abspath(__file__))  # Use if images are in the 'data' directory in the local dir
 input_dir = os.path.join(current_dir, 'data', 'input')
 output_dir = os.path.join(current_dir, 'data', 'output')
 
