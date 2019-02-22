@@ -8598,8 +8598,8 @@
             },
             "properties": {
                 "country": "ES",
-                "name-ASCII": "Gasteiz / Vitoria",
-                "name-UTF8": "Gasteiz / Vitoria",
+                "name-ASCII": "Gasteiz Vitoria",
+                "name-UTF8": "Gasteiz Vitoria",
                 "population": 235661
             },
             "type": "Feature"
@@ -10795,7 +10795,7 @@
             "properties": {
                 "country": "ES",
                 "name-ASCII": "San Sebastian",
-                "name-UTF8": "Donostia / San Sebasti\u00e1n",
+                "name-UTF8": "Donostia San Sebasti\u00e1n",
                 "population": 185357
             },
             "type": "Feature"

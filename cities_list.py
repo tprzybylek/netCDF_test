@@ -313,6 +313,7 @@ country_codes = {
     'Greece': 'GR',
     'Turkey': 'TR',
     'Russia': 'RU',
+    'Serbia': 'RS',
 }
 breaks = [
     (1000000, 50.0),
@@ -332,11 +333,11 @@ with open('cities.csv', encoding='utf-8') as csv_file:
     for row in read_csv:
         cities.append((row[0], row[1], row[2], int(row[3]), float(row[4]), float(row[5])))
 
-# cities = aggregate_cities(breaks, cities)
-generate_bounding_boxes(cities)
+cities = aggregate_cities(breaks, cities)
+# generate_bounding_boxes(cities)
 
-# write_geojson('cities.json', cities)
-# write_csv('cities.csv', cities)
+write_geojson('cities.json', cities)
+write_csv('cities.csv', cities)
 
 elapsed = (time.time() - start)
 print('\033[92mElapsed time:\033[0m', str(timedelta(seconds=elapsed)))
