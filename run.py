@@ -3,28 +3,85 @@ import netCDF4 as nC
 import numpy as np
 import png
 import csv
-from osgeo import gdal, osr
+import json
+from osgeo import gdal, osr, ogr
 import struct
 
-# METADATA/EOP_METADATA/om:featureOfInterest/eop:multiExtentOf/gml:surfaceMembers/gml:exterior/:gml:posList
+from operator import itemgetter
+from datetime import timedelta
+import time
 
-def clip_masked_array(arr):
-    si, se = np.where(~arr.mask)
-    arr = arr[si.min():si.max() + 1, se.min():se.max() + 1]
-    return arr
+from scipy.misc import imresize
+import pyresample
+import pyproj
+import matplotlib.pyplot as plt
+
+
+def regrid(lats, lons, vals, n):
+    nrows, ncols = n, n
+
+    lons = imresize(lons, (nrows, ncols), interp='bilinear', mode='F')
+    lats = imresize(lats, (nrows, ncols), interp='bilinear', mode='F')
+    vals = imresize(vals, (nrows, ncols), interp='bicubic', mode='F')
+
+    # plt.imshow(vals)
+    # plt.show()
+
+    return lats, lons, vals
+
+
+def select_points(latitudes, longitudes, values, polygon_extent):
+    def clip_masked_array(arr):
+        si, se = np.where(~arr.mask)
+        arr = arr[si.min():si.max() + 1, se.min():se.max() + 1]
+        return arr
+
+    if type(values) == np.ndarray:
+        latitudes = np.ma.MaskedArray(latitudes)
+        longitudes = np.ma.MaskedArray(longitudes)
+        values = np.ma.MaskedArray(values)
+
+    selected_latitudes = np.logical_and(latitudes > polygon_extent['min_lat'],
+                                        latitudes < polygon_extent['max_lat'])
+    selected_longitudes = np.logical_and(longitudes > polygon_extent['min_lon'],
+                                         longitudes < polygon_extent['max_lon'])
+
+    selected_latitudes_longitudes = np.logical_and(selected_latitudes, selected_longitudes)
+    selected_latitudes_longitudes = np.invert(np.asarray(selected_latitudes_longitudes))
+
+    latitudes.mask = selected_latitudes_longitudes
+    longitudes.mask = selected_latitudes_longitudes
+    values.mask = selected_latitudes_longitudes
+
+    # plt.imshow(latitudes)
+    # plt.show()
+
+    i = np.where(~latitudes.mask)
+
+    if i[0].size > 4:
+        latitudes = clip_masked_array(latitudes)
+        longitudes = clip_masked_array(longitudes)
+        values = clip_masked_array(values)
+
+        latitudes = np.flip(latitudes, axis=0)
+        longitudes = np.flip(longitudes, axis=0)
+        values = np.flip(values, axis=0)
+
+        return np.ma.copy(latitudes), np.ma.copy(longitudes), np.ma.copy(values)
+    else:
+        return None, None, None
 
 
 def write_geotiff(latitudes, longitudes, values, filename):
     filename += '.tiff'
-    # Use when clipping raw data to level 1
     real_bbox = {'max_lon': np.max(longitudes),
                  'min_lon': np.min(longitudes),
                  'max_lat': np.max(latitudes),
                  'min_lat': np.min(latitudes),
                  }
 
-    pixel_width = (real_bbox['max_lon'] - real_bbox['min_lon']) / lons.shape[1]
-    pixel_height = (real_bbox['max_lat'] - real_bbox['min_lat']) / lons.shape[0]
+    pixel_width = (real_bbox['max_lon'] - real_bbox['min_lon']) / longitudes.shape[1]
+    pixel_height = (real_bbox['max_lat'] - real_bbox['min_lat']) / longitudes.shape[0]
 
     geo_transform = (real_bbox['min_lon'] - 0.5 * pixel_width,
                      pixel_width,
@@ -33,14 +90,6 @@ def write_geotiff(latitudes, longitudes, values, filename):
                      0,
                      -pixel_height
                      )
-
-    # Use when clipping raw data to level 2
-    # gcp_list = [
-    #     gdal.GCP(float(longitudes[0][0]), float(latitudes[0][0]), 0.0, 1, 1),
-    #     gdal.GCP(float(longitudes[0][-1]), float(latitudes[0][-1]), 0.0, 9, 1),
-    #     gdal.GCP(float(longitudes[-1][-1]), float(latitudes[-1][-1]), 0.0, 9, 7),
-    #     gdal.GCP(float(longitudes[-1][0]), float(latitudes[-1][0]), 0.0, 1, 7),
-    # ]
 
     driver = gdal.GetDriverByName('GTiff')
     rows, cols = values.shape
@@ -52,7 +101,7 @@ def write_geotiff(latitudes, longitudes, values, filename):
     dataset.SetProjection(projection_wkt)
     # geo_transform = gdal.GCPsToGeoTransform(gcp_list)
     dataset.SetGeoTransform(geo_transform)
-    dataset.GetRasterBand(1).WriteArray(vals)
+    dataset.GetRasterBand(1).WriteArray(values)
     dataset = None
 
 
@@ -112,220 +161,241 @@ def read_png(filename):
     return values
 
 
-# requested_bbox = {'max_lon': 17.22,
-#                   'min_lon': 16.80,
-#                   'max_lat': 51.22,
-#                   'min_lat': 51.01}   # Output geographical extent
+def get_product_extent(nc_dataset):
+    nc_dataset_gml = nc_dataset[
+        'METADATA/EOP_METADATA/om:featureOfInterest/eop:multiExtentOf/gml:surfaceMembers/gml:exterior'
+    ]
 
-requested_bbox = {'max_lon': 17.50,
-                  'min_lon': 16.50,
-                  'max_lat': 51.50,
-                  'min_lat': 50.50}
+    nc_dataset_gml = getattr(nc_dataset_gml, 'gml:posList')
+
+    nc_dataset_gml = nc_dataset_gml.split(' ')
+    nc_dataset_gml = [float(x) for x in nc_dataset_gml]
+    nc_dataset_gml = list(zip(nc_dataset_gml[1::2], nc_dataset_gml[::2]))
+
+    nc_dataset_gml[:] = [x for x in nc_dataset_gml if x[1] > 0]
+
+    nc_dataset_geojson = {
+        'type': 'Polygon',
+        'coordinates': [
+            nc_dataset_gml
+        ]
+    }
+
+    nc_dataset_geojson = json.dumps(nc_dataset_geojson)
+    nc_dataset_extent = ogr.CreateGeometryFromJson(nc_dataset_geojson)
+    return nc_dataset_extent
+
+
+def get_polygon_extent(polygon_coordinates):
+    polygon_bbox = {
+        'max_lat': max(polygon_coordinates, key=itemgetter(1))[1],
+        'min_lat': min(polygon_coordinates, key=itemgetter(1))[1],
+        'max_lon': max(polygon_coordinates, key=itemgetter(0))[0],
+        'min_lon': min(polygon_coordinates, key=itemgetter(0))[0],
+    }
+    return polygon_bbox
+
+
+start = time.time()
 
 current_dir = 'D:\\'
 # current_dir = os.path.dirname(os.path.abspath(__file__))  # Use if images are in the 'data' directory in the local dir
 input_dir = os.path.join(current_dir, 'data', 'input')
 output_dir = os.path.join(current_dir, 'data', 'output')
 
-output_archive = {}
-
 filepaths = [os.path.join(input_dir, file) for file in os.listdir(input_dir)]
 
-for filepath in filepaths:
+with open('cities_areas.json', encoding='utf-8') as f:
+    cities_list = json.load(f)
 
-    file = filepath.split('\\')[-1]
-    file_attributes = file.split('_')
+for filepath in filepaths:
+    file = str(filepath.split('\\')[-1])
+    input_file_attributes = file.split('_')
+    output_file_attributes = {}
 
     ds = nC.Dataset(filepath, "r")
+    satellite_product_extent = get_product_extent(ds)
 
-    if file_attributes[2] == 'L2':
-
-        attributes = {attribute: ds.getncattr(attribute) for attribute in ds.ncattrs()}
-        variables = [variable for variable in ds['/PRODUCT'].variables.keys()]
-        dimensions = [dimension for dimension in ds['/PRODUCT'].dimensions.keys()]
-
-        output_attributes = {
-            'platform': file_attributes[0],
-            'level': file_attributes[2],
-            'product_type': file_attributes[4],
-            'sensing_date': file_attributes[7],
-        }
-
+    if input_file_attributes[2] == 'L2':
         ds = ds['/PRODUCT']
 
-        lons = ds.variables['longitude'][0, :, :]
-        lats = ds.variables['latitude'][0, :, :]
+        output_file_attributes['platform'] = input_file_attributes[0]
+        output_file_attributes['level'] = input_file_attributes[2]
+        output_file_attributes['product_type'] = input_file_attributes[4]
+        output_file_attributes['sensing_date'] = input_file_attributes[7]
 
-        if output_attributes['product_type'] == 'CLOUD':
-            vals = ds.variables['cloud_optical_thickness'][0, :, :]
-            vals_units = ds.variables['cloud_optical_thickness'].units
-            output_attributes['sensing_date'] = file_attributes[7]
-        elif output_attributes['product_type'] == 'SO2':
-            vals = ds.variables['sulfurdioxide_total_vertical_column'][0, :, :]
-            vals_units = ds.variables['sulfurdioxide_total_vertical_column'].units
-            output_attributes['sensing_date'] = file_attributes[9]
-        elif output_attributes['product_type'] == 'O3':
-            vals = ds.variables['ozone_total_vertical_column'][0, :, :]
-            vals_units = ds.variables['ozone_total_vertical_column'].units
-            output_attributes['sensing_date'] = file_attributes[10]
+        for city in cities_list['features']:
+            lons = np.ma.copy(ds.variables['longitude'][0, :, :])
+            lats = np.ma.copy(ds.variables['latitude'][0, :, :])
 
-        # TODO: Change to os.path
-        new_filename = output_dir + '\\' \
-            + output_attributes['platform'] \
-            + '_' + output_attributes['product_type'] \
-            + '_' + output_attributes['sensing_date']
+            if output_file_attributes['product_type'] == 'CLOUD':
+                vals = np.ma.copy(ds.variables['cloud_optical_thickness'][0, :, :])
+                vals_units = ds.variables['cloud_optical_thickness'].units
+                output_file_attributes['sensing_date'] = input_file_attributes[7]
+            elif output_file_attributes['product_type'] == 'SO2':
+                vals = np.ma.copy(ds.variables['sulfurdioxide_total_vertical_column'][0, :, :])
+                vals_units = ds.variables['sulfurdioxide_total_vertical_column'].units
+                output_file_attributes['sensing_date'] = input_file_attributes[9]
+            elif output_file_attributes['product_type'] == 'O3':
+                vals = np.ma.copy(ds.variables['ozone_total_vertical_column'][0, :, :])
+                vals_units = ds.variables['ozone_total_vertical_column'].units
+                output_file_attributes['sensing_date'] = input_file_attributes[10]
+            else:
+                vals = None
 
-        array_name = output_attributes['platform'] \
-            + '_' + output_attributes['product_type'] \
-            + '_' + output_attributes['sensing_date'] \
+            requested_small_bbox = get_polygon_extent(city['geometry']['coordinates'][0])
+            requested_big_bbox = requested_small_bbox.copy()
 
-        stacked_file = np.stack((lats, lons, vals))
+            requested_big_bbox['min_lat'] -= 0.5
+            requested_big_bbox['max_lat'] += 0.5
+            requested_big_bbox['min_lon'] -= 0.5
+            requested_big_bbox['max_lon'] += 0.5
 
-        lat_select = np.logical_and(lats > requested_bbox['min_lat'], lats < requested_bbox['max_lat'])
-        lon_select = np.logical_and(lons > requested_bbox['min_lon'], lons < requested_bbox['max_lon'])
+            city_geojson = {
+                'type': 'Polygon',
+                'coordinates':
+                    city['geometry']['coordinates']
+            }
+            city_geojson = json.dumps(city_geojson)
 
-        lonlat_select = np.logical_and(lon_select, lat_select)
-        lonlat_select = np.invert(np.asarray(lonlat_select))
+            city_extent = ogr.CreateGeometryFromJson(city_geojson)
+            intersection = satellite_product_extent.Intersection(city_extent)
 
-        lats.mask = lonlat_select
-        lons.mask = lonlat_select
-        vals.mask = lonlat_select
+            if intersection.IsEmpty():
+                pass
+            else:
+                output_file_attributes['city_country_code'] = city['properties']['country']
+                output_file_attributes['city_name'] = city['properties']['name-ASCII']
 
-        lats = clip_masked_array(lats)
-        lons = clip_masked_array(lons)
-        vals = clip_masked_array(vals)
+                output_filename = str(output_file_attributes['city_country_code']) \
+                    + '_' + str(output_file_attributes['city_name']) \
+                    + '_' + str(output_file_attributes['platform']) \
+                    + '_' + str(output_file_attributes['product_type']) \
+                    + '_' + str(output_file_attributes['sensing_date'])
 
-        lats = np.flip(lats, axis=0)
-        lons = np.flip(lons, axis=0)
-        vals = np.flip(vals, axis=0)
+                print(output_filename)
 
-        # fig, axs = plt.subplots(nrows=3, ncols=1)
-        # axs[0].imshow(lats)
-        # axs[1].imshow(lons)
-        # axs[2].imshow(vals)
-        # plt.show()
+                if not os.path.exists(os.path.join(output_dir, output_file_attributes['product_type'])):
+                    os.makedirs(os.path.join(output_dir, output_file_attributes['product_type']))
 
-        # for i, v in np.ndenumerate(lats):
-        #     lat = lats[i[0]][i[1]]
-        #     lon = lons[i[0]][i[1]]
-        #     val = vals[i[0]][i[1]]
-        #
-        #     if lat < 51.265 and lon > 16.745:
-        #         new_bbox = {'tl': i}
-        #         print(new_bbox)
-        #         break
-        #
-        # row = lats[new_bbox['tl'][0]]
-        # for i, v in np.ndenumerate(row):
-        #     lat = lats[new_bbox['tl'][0]][i]
-        #     lon = lons[new_bbox['tl'][0]][i]
-        #     val = vals[new_bbox['tl'][0]][i]
-        #
-        #     print(lat, lon, val)
-        #
-        #     if lat < 51.388 and lon > 17.210:
-        #         new_bbox['tr'] = (new_bbox['tl'][0], i[0])
-        #         print(new_bbox)
-        #         break
-        #
-        # col = lats.T[new_bbox['tl'][1]]
-        # for i, v in np.ndenumerate(col):
-        #     lat = lats.T[new_bbox['tl'][1]][i]
-        #     lon = lons.T[new_bbox['tl'][1]][i]
-        #     val = vals.T[new_bbox['tl'][1]][i]
-        #
-        #     if lat < 50.861:
-        #         new_bbox['dl'] = (i[0], new_bbox['tl'][1])
-        #         print(new_bbox)
-        #         break
-        #
-        # new_bbox['dr'] = (new_bbox['dl'][0], new_bbox['tr'][1])
-        # print(new_bbox)
+                output_filename = os.path.join(output_dir, output_file_attributes['product_type'], output_filename)
 
-        # write_csv(lats[new_bbox['tl'][0]:new_bbox['dl'][0], new_bbox['dl'][1]:new_bbox['dr'][1]],
-        #           lons[new_bbox['tl'][0]:new_bbox['dl'][0], new_bbox['dl'][1]:new_bbox['dr'][1]],
-        #           vals[new_bbox['tl'][0]:new_bbox['dl'][0], new_bbox['dl'][1]:new_bbox['dr'][1]],
-        #           new_filename)
-        #
-        # write_geotiff(lats[new_bbox['tl'][0]:new_bbox['dl'][0], new_bbox['dl'][1]:new_bbox['dr'][1]],
-        #               lons[new_bbox['tl'][0]:new_bbox['dl'][0], new_bbox['dl'][1]:new_bbox['dr'][1]],
-        #               vals[new_bbox['tl'][0]:new_bbox['dl'][0], new_bbox['dl'][1]:new_bbox['dr'][1]],
-        #               new_filename)
+                selected_lats, selected_lons, selected_vals = select_points(lats, lons, vals, requested_big_bbox)
+                selected_lats, selected_lons, selected_vals = regrid(selected_lats,
+                                                                     selected_lons,
+                                                                     selected_vals,
+                                                                     100)
 
-        write_csv(lats, lons, vals, new_filename)
-        # write_geotiff(lats, lons, vals, new_filename)
-        # write_png(vals, new_filename)
+                selected_lats, selected_lons, selected_vals = select_points(selected_lats,
+                                                                            selected_lons,
+                                                                            selected_vals,
+                                                                            requested_small_bbox)
 
-        print(array_name)
+                selected_lats, selected_lons, selected_vals = regrid(selected_lats,
+                                                                     selected_lons,
+                                                                     selected_vals,
+                                                                     30)
+
+                if vals is not None:
+                    # write_csv(lats, lons, vals, output_filename)
+                    write_geotiff(selected_lats, selected_lons, selected_vals, output_filename)
+                    # write_png(vals, output_filename)
         ds = None
 
-    elif file_attributes[2] == 'L1B':
-        if file_attributes[4] == 'BD1' or file_attributes[4] == 'BD2':
-            output_attributes = {
-                'platform': file_attributes[0],
-                'level': file_attributes[2],
-                'product_type': file_attributes[4],
-                'sensing_date': file_attributes[10][:-3],
-            }
+    elif input_file_attributes[2] == 'L1B':
+        output_file_attributes['platform'] = input_file_attributes[0]
+        output_file_attributes['level'] = input_file_attributes[2]
+        output_file_attributes['product_type'] = input_file_attributes[4]
+        output_file_attributes['sensing_date'] = input_file_attributes[10][:-3]
 
-            if file_attributes[4] == 'BD1':
-                ds_obs = ds['/BAND1_RADIANCE/STANDARD_MODE/OBSERVATIONS']
-                ds_geo = ds['/BAND1_RADIANCE/STANDARD_MODE/GEODATA']
+        if output_file_attributes['product_type'] == 'BD1':
+            ds_obs = ds['/BAND1_RADIANCE/STANDARD_MODE/OBSERVATIONS']
+            ds_geo = ds['/BAND1_RADIANCE/STANDARD_MODE/GEODATA']
+        else:
+            ds_obs = ds['/BAND2_RADIANCE/STANDARD_MODE/OBSERVATIONS']
+            ds_geo = ds['/BAND2_RADIANCE/STANDARD_MODE/GEODATA']
 
-                output_bbox = requested_bbox.copy()
-                output_bbox['max_lon'] += 0.32
-                output_bbox['min_lon'] -= 0.10
-                output_bbox['max_lat'] += 0.10
-                output_bbox['min_lat'] -= 0.10
-            else:
-                ds_obs = ds['/BAND2_RADIANCE/STANDARD_MODE/OBSERVATIONS']
-                ds_geo = ds['/BAND2_RADIANCE/STANDARD_MODE/GEODATA']
+        bands = ds_obs.variables['radiance'][0, :, :, :]
 
-                output_bbox = requested_bbox.copy()
+        # TODO: optimize the algorithm - make a list of cities in the file
 
-            slices = ds_obs.variables['radiance'][0, :, :, :]
 
-            for band in range(slices.shape[2]):
-                lons = ds_geo.variables['longitude'][0, :, :]
-                lats = ds_geo.variables['latitude'][0, :, :]
-                vals = slices[:, :, band]
+        for band in range(bands.shape[2]):
+            output_file_attributes['band'] = band
 
-                output_attributes['band'] = band
+            for city in cities_list['features']:
+                lats = np.ma.copy(ds_geo.variables['latitude'][0, :, :])
+                lons = np.ma.copy(ds_geo.variables['longitude'][0, :, :])
+                vals = np.ma.copy(bands[:, :, band])
 
-                new_filename = output_dir + '\\' \
-                    + output_attributes['platform'] \
-                    + '_' + output_attributes['product_type'] \
-                    + '_' + output_attributes['sensing_date'] \
-                    + '_' + str(output_attributes['band'])
+                requested_small_bbox = get_polygon_extent(city['geometry']['coordinates'][0])
+                requested_big_bbox = requested_small_bbox.copy()
 
-                array_name = output_attributes['platform'] \
-                    + '_' + output_attributes['product_type'] \
-                    + '_' + output_attributes['sensing_date'] \
-                    + '_' + str(output_attributes['band']) \
+                requested_big_bbox['min_lat'] -= 0.5
+                requested_big_bbox['max_lat'] += 0.5
+                requested_big_bbox['min_lon'] -= 0.5
+                requested_big_bbox['max_lon'] += 0.5
 
-                stacked_file = np.stack((lats, lons, vals))
+                city_geojson = {
+                    'type': 'Polygon',
+                    'coordinates':
+                        city['geometry']['coordinates']
+                }
+                city_geojson = json.dumps(city_geojson)
 
-                lat_select = np.logical_and(lats > output_bbox['min_lat'], lats < output_bbox['max_lat'])
-                lon_select = np.logical_and(lons > output_bbox['min_lon'], lons < output_bbox['max_lon'])
+                city_extent = ogr.CreateGeometryFromJson(city_geojson)
+                intersection = satellite_product_extent.Intersection(city_extent)
 
-                lonlat_select = np.logical_and(lon_select, lat_select)
-                lonlat_select = np.invert(np.asarray(lonlat_select))
+                if intersection.IsEmpty():
+                    pass
+                else:
+                    output_file_attributes['city_country_code'] = city['properties']['country']
+                    output_file_attributes['city_name'] = city['properties']['name-ASCII']
 
-                lats.mask = lonlat_select
-                lons.mask = lonlat_select
-                vals.mask = lonlat_select
+                    output_filename = str(output_file_attributes['city_country_code']) \
+                        + '_' + str(output_file_attributes['city_name']) \
+                        + '_' + str(output_file_attributes['platform']) \
+                        + '_' + str(output_file_attributes['product_type']) \
+                        + '_' + str(output_file_attributes['sensing_date']) \
+                        + '_' + str(output_file_attributes['band'])
 
-                lats = clip_masked_array(lats)
-                lons = clip_masked_array(lons)
-                vals = clip_masked_array(vals)
+                    print(output_filename)
 
-                lats = np.flip(lats, axis=0)
-                lons = np.flip(lons, axis=0)
-                vals = np.flip(vals, axis=0)
+                    if not os.path.exists(os.path.join(output_dir, output_file_attributes['product_type'])):
+                        os.makedirs(os.path.join(output_dir, output_file_attributes['product_type']))
 
-                write_csv(lats, lons, vals, new_filename)
-                # write_geotiff(lats, lons, vals, new_filename)
-                # write_png(vals, new_filename)
+                    output_filename = os.path.join(output_dir, output_file_attributes['product_type'], output_filename)
 
-                print(array_name)
-                ds = None
+                    selected_lats, selected_lons, selected_vals = select_points(lats, lons, vals, requested_big_bbox)
+                    selected_lats, selected_lons, selected_vals = regrid(selected_lats,
+                                                                         selected_lons,
+                                                                         selected_vals,
+                                                                         100)
+
+                    selected_lats, selected_lons, selected_vals = select_points(selected_lats,
+                                                                                selected_lons,
+                                                                                selected_vals,
+                                                                                requested_small_bbox)
+
+                    if selected_vals is not None:
+                        selected_lats, selected_lons, selected_vals = regrid(selected_lats,
+                                                                             selected_lons,
+                                                                             selected_vals,
+                                                                             30)
+
+                        # write_csv(selected_lats, selected_lons, selected_vals, output_filename)
+                        write_geotiff(selected_lats, selected_lons, selected_vals, output_filename)
+                        # write_png(vals, output_filename)
+
+            partial_elapsed = (time.time() - start)
+            print('Band:', band)
+            print('\033[92mPartial elapsed time:\033[0m', str(timedelta(seconds=partial_elapsed)))
+
+    partial_elapsed = (time.time() - start)
+    print('File:', file)
+    print('\033[92mPartial elapsed time:\033[0m', str(timedelta(seconds=partial_elapsed)))
+
+    ds = None
+
+total_elapsed = (time.time() - start)
+print('\033[92mElapsed time:\033[0m', str(timedelta(seconds=total_elapsed)))
