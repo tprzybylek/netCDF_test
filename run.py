@@ -213,7 +213,7 @@ for filepath in filepaths:
     input_file_attributes = file.split('_')
     output_file_attributes = {}
 
-    ds = nC.Dataset(filepath, "r")
+    ds = nC.Dataset(filepath, 'r')
     satellite_product_extent = get_product_extent(ds)
 
     if input_file_attributes[2] == 'L2':
@@ -300,7 +300,6 @@ for filepath in filepaths:
                     # write_csv(lats, lons, vals, output_filename)
                     write_geotiff(selected_lats, selected_lons, selected_vals, output_filename)
                     # write_png(vals, output_filename)
-        ds = None
 
     elif input_file_attributes[2] == 'L1B':
         output_file_attributes['platform'] = input_file_attributes[0]
@@ -315,27 +314,13 @@ for filepath in filepaths:
             ds_obs = ds['/BAND2_RADIANCE/STANDARD_MODE/OBSERVATIONS']
             ds_geo = ds['/BAND2_RADIANCE/STANDARD_MODE/GEODATA']
 
-        bands = ds_obs.variables['radiance'][0, :, :, :]
-
-        # TODO: optimize the algorithm - make a list of cities in the file
-
-
-        for band in range(bands.shape[2]):
-            output_file_attributes['band'] = band
-
+        try:
+            bands = ds_obs.variables['radiance'][0, :, :, :]
+        except RuntimeError:
+            pass
+        else:
+            cities_in_file = []
             for city in cities_list['features']:
-                lats = np.ma.copy(ds_geo.variables['latitude'][0, :, :])
-                lons = np.ma.copy(ds_geo.variables['longitude'][0, :, :])
-                vals = np.ma.copy(bands[:, :, band])
-
-                requested_small_bbox = get_polygon_extent(city['geometry']['coordinates'][0])
-                requested_big_bbox = requested_small_bbox.copy()
-
-                requested_big_bbox['min_lat'] -= 0.5
-                requested_big_bbox['max_lat'] += 0.5
-                requested_big_bbox['min_lon'] -= 0.5
-                requested_big_bbox['max_lon'] += 0.5
-
                 city_geojson = {
                     'type': 'Polygon',
                     'coordinates':
@@ -349,6 +334,24 @@ for filepath in filepaths:
                 if intersection.IsEmpty():
                     pass
                 else:
+                    cities_in_file.append(city)
+
+            for band in range(bands.shape[2]):
+                output_file_attributes['band'] = band
+
+                for city in cities_in_file:
+                    lats = np.ma.copy(ds_geo.variables['latitude'][0, :, :])
+                    lons = np.ma.copy(ds_geo.variables['longitude'][0, :, :])
+                    vals = np.ma.copy(bands[:, :, band])
+
+                    requested_small_bbox = get_polygon_extent(city['geometry']['coordinates'][0])
+                    requested_big_bbox = requested_small_bbox.copy()
+
+                    requested_big_bbox['min_lat'] -= 0.5
+                    requested_big_bbox['max_lat'] += 0.5
+                    requested_big_bbox['min_lon'] -= 0.5
+                    requested_big_bbox['max_lon'] += 0.5
+
                     output_file_attributes['city_country_code'] = city['properties']['country']
                     output_file_attributes['city_name'] = city['properties']['name-ASCII']
 
@@ -387,15 +390,16 @@ for filepath in filepaths:
                         write_geotiff(selected_lats, selected_lons, selected_vals, output_filename)
                         # write_png(vals, output_filename)
 
-            partial_elapsed = (time.time() - start)
-            print('Band:', band)
-            print('\033[92mPartial elapsed time:\033[0m', str(timedelta(seconds=partial_elapsed)))
+                partial_elapsed = (time.time() - start)
+                print('\033[92mBand:\033[0m', band)
+                print('\033[92mPartial elapsed time:\033[0m', str(timedelta(seconds=partial_elapsed)))
+
+    ds.close()
 
     partial_elapsed = (time.time() - start)
     print('File:', file)
     print('\033[92mPartial elapsed time:\033[0m', str(timedelta(seconds=partial_elapsed)))
 
-    ds = None
 
 total_elapsed = (time.time() - start)
 print('\033[92mElapsed time:\033[0m', str(timedelta(seconds=total_elapsed)))
