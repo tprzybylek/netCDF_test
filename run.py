@@ -14,7 +14,7 @@ import time
 
 from scipy.misc import imresize
 
-# Code profiling
+# For code profiling
 #
 # Add a @profile decorator before function definition
 # Run
@@ -266,135 +266,67 @@ def get_polygon_extent(polygon_coordinates):
     return polygon_bbox
 
 
-start = time.time()
+def main():
+    start = time.time()
 
-# Use if images are in the 'CURRENT_DIR/data/' directory
-# current_dir = os.path.dirname(os.path.abspath(__file__))
-current_dir = 'D:\\'
+    # Use if images are in the 'CURRENT_DIR/data/' directory
+    # current_dir = os.path.dirname(os.path.abspath(__file__))
+    current_dir = 'D:\\'
 
-# CURRENT_DIR/data/input/ <- put the input *.nc files here
-input_dir = os.path.join(current_dir, 'data', 'input')
+    # CURRENT_DIR/data/input/ <- put the input *.nc files here
+    input_dir = os.path.join(current_dir, 'data', 'input')
 
-# CURRENT_DIR/data/output/ <- output files are saved here
-output_dir = os.path.join(current_dir, 'data', 'output')
+    # CURRENT_DIR/data/output/ <- output files are saved here
+    output_dir = os.path.join(current_dir, 'data', 'output')
 
-filepaths = [os.path.join(input_dir, file) for file in os.listdir(input_dir)]
+    filepaths = [os.path.join(input_dir, file) for file in os.listdir(input_dir)]
 
-with open('cities_areas.json', encoding='utf-8') as f:
-    cities_list = json.load(f)
+    with open('cities_areas.json', encoding='utf-8') as f:
+        cities_list = json.load(f)
 
-for filepath in filepaths:
-    file = str(filepath.split('\\')[-1])
-    input_file_attributes = file.split('_')
-    output_file_attributes = {}
+    for filepath in filepaths:
+        file = str(filepath.split('\\')[-1])
+        input_file_attributes = file.split('_')
+        output_file_attributes = {}
 
-    ds = nC.Dataset(filepath, 'r')
-    satellite_product_extent = get_product_extent(ds)
+        ds = nC.Dataset(filepath, 'r')
+        satellite_product_extent = get_product_extent(ds)
 
-    if input_file_attributes[2] == 'L2':
-        ds = ds['/PRODUCT']
+        if input_file_attributes[2] == 'L2':
+            ds = ds['/PRODUCT']
 
-        output_file_attributes['platform'] = input_file_attributes[0]
-        output_file_attributes['level'] = input_file_attributes[2]
-        output_file_attributes['product_type'] = input_file_attributes[4]
-        output_file_attributes['sensing_date'] = input_file_attributes[7]
+            output_file_attributes['platform'] = input_file_attributes[0]
+            output_file_attributes['level'] = input_file_attributes[2]
+            output_file_attributes['product_type'] = input_file_attributes[4]
+            output_file_attributes['sensing_date'] = input_file_attributes[7]
 
-        for city in cities_list['features']:
-            lons = np.ma.copy(ds.variables['longitude'][0, :, :])
-            lats = np.ma.copy(ds.variables['latitude'][0, :, :])
-
-            if output_file_attributes['product_type'] == 'CLOUD':
-                vals = np.ma.copy(ds.variables['cloud_optical_thickness'][0, :, :])
-                vals_units = ds.variables['cloud_optical_thickness'].units
-                output_file_attributes['sensing_date'] = input_file_attributes[7]
-            elif output_file_attributes['product_type'] == 'SO2':
-                vals = np.ma.copy(ds.variables['sulfurdioxide_total_vertical_column'][0, :, :])
-                vals_units = ds.variables['sulfurdioxide_total_vertical_column'].units
-                output_file_attributes['sensing_date'] = input_file_attributes[9]
-            elif output_file_attributes['product_type'] == 'O3':
-                vals = np.ma.copy(ds.variables['ozone_total_vertical_column'][0, :, :])
-                vals_units = ds.variables['ozone_total_vertical_column'].units
-                output_file_attributes['sensing_date'] = input_file_attributes[10]
-            else:
-                vals = None
-
-            requested_small_bbox = get_polygon_extent(city['geometry']['coordinates'][0])
-            requested_big_bbox = requested_small_bbox.copy()
-
-            requested_big_bbox['min_lat'] -= 0.5
-            requested_big_bbox['max_lat'] += 0.5
-            requested_big_bbox['min_lon'] -= 0.5
-            requested_big_bbox['max_lon'] += 0.5
-
-            city_geojson = {
-                'type': 'Polygon',
-                'coordinates':
-                    city['geometry']['coordinates']
-            }
-            city_geojson = json.dumps(city_geojson)
-
-            city_extent = ogr.CreateGeometryFromJson(city_geojson)
-            intersection = satellite_product_extent.Intersection(city_extent)
-
-            if intersection.IsEmpty():
-                pass
-            else:
-                output_file_attributes['city_country_code'] = city['properties']['country']
-                output_file_attributes['city_name'] = city['properties']['name-ASCII']
-
-                output_filename = str(output_file_attributes['city_country_code']) \
-                    + '_' + str(output_file_attributes['city_name']) \
-                    + '_' + str(output_file_attributes['platform']) \
-                    + '_' + str(output_file_attributes['product_type']) \
-                    + '_' + str(output_file_attributes['sensing_date'])
-
-                print(output_filename)
-
-                if not os.path.exists(os.path.join(output_dir, output_file_attributes['product_type'])):
-                    os.makedirs(os.path.join(output_dir, output_file_attributes['product_type']))
-
-                output_filename = os.path.join(output_dir, output_file_attributes['product_type'], output_filename)
-
-                selected_lats, selected_lons, selected_vals = select_points(lats, lons, vals, requested_big_bbox)
-                selected_lats, selected_lons, selected_vals = regrid(selected_lats,
-                                                                     selected_lons,
-                                                                     selected_vals,
-                                                                     100)
-
-                selected_lats, selected_lons, selected_vals = select_points(selected_lats,
-                                                                            selected_lons,
-                                                                            selected_vals,
-                                                                            requested_small_bbox)
-                if selected_vals is not None:
-                    selected_lats, selected_lons, selected_vals = regrid(selected_lats,
-                                                                         selected_lons,
-                                                                         selected_vals,
-                                                                         30)
-
-                    # write_csv(lats, lons, vals, output_filename)
-                    write_geotiff(selected_lats, selected_lons, selected_vals, output_filename)
-                    # write_png(vals, output_filename)
-
-    elif input_file_attributes[2] == 'L1B':
-        output_file_attributes['platform'] = input_file_attributes[0]
-        output_file_attributes['level'] = input_file_attributes[2]
-        output_file_attributes['product_type'] = input_file_attributes[4]
-        output_file_attributes['sensing_date'] = input_file_attributes[10][:-3]
-
-        if output_file_attributes['product_type'] == 'BD1':
-            ds_obs = ds['/BAND1_RADIANCE/STANDARD_MODE/OBSERVATIONS']
-            ds_geo = ds['/BAND1_RADIANCE/STANDARD_MODE/GEODATA']
-        else:
-            ds_obs = ds['/BAND2_RADIANCE/STANDARD_MODE/OBSERVATIONS']
-            ds_geo = ds['/BAND2_RADIANCE/STANDARD_MODE/GEODATA']
-
-        try:
-            bands = ds_obs.variables['radiance'][0, :, :, :]
-        except RuntimeError:
-            pass
-        else:
-            cities_in_file = []
             for city in cities_list['features']:
+                lons = np.ma.copy(ds.variables['longitude'][0, :, :])
+                lats = np.ma.copy(ds.variables['latitude'][0, :, :])
+
+                if output_file_attributes['product_type'] == 'CLOUD':
+                    vals = np.ma.copy(ds.variables['cloud_optical_thickness'][0, :, :])
+                    vals_units = ds.variables['cloud_optical_thickness'].units
+                    output_file_attributes['sensing_date'] = input_file_attributes[7]
+                elif output_file_attributes['product_type'] == 'SO2':
+                    vals = np.ma.copy(ds.variables['sulfurdioxide_total_vertical_column'][0, :, :])
+                    vals_units = ds.variables['sulfurdioxide_total_vertical_column'].units
+                    output_file_attributes['sensing_date'] = input_file_attributes[9]
+                elif output_file_attributes['product_type'] == 'O3':
+                    vals = np.ma.copy(ds.variables['ozone_total_vertical_column'][0, :, :])
+                    vals_units = ds.variables['ozone_total_vertical_column'].units
+                    output_file_attributes['sensing_date'] = input_file_attributes[10]
+                else:
+                    vals = None
+
+                requested_small_bbox = get_polygon_extent(city['geometry']['coordinates'][0])
+                requested_big_bbox = requested_small_bbox.copy()
+
+                requested_big_bbox['min_lat'] -= 0.5
+                requested_big_bbox['max_lat'] += 0.5
+                requested_big_bbox['min_lon'] -= 0.5
+                requested_big_bbox['max_lon'] += 0.5
+
                 city_geojson = {
                     'type': 'Polygon',
                     'coordinates':
@@ -408,24 +340,6 @@ for filepath in filepaths:
                 if intersection.IsEmpty():
                     pass
                 else:
-                    cities_in_file.append(city)
-
-            for band in range(bands.shape[2]):
-                output_file_attributes['band'] = band
-
-                for city in cities_in_file:
-                    lats = np.ma.copy(ds_geo.variables['latitude'][0, :, :])
-                    lons = np.ma.copy(ds_geo.variables['longitude'][0, :, :])
-                    vals = np.ma.copy(bands[:, :, band])
-
-                    requested_small_bbox = get_polygon_extent(city['geometry']['coordinates'][0])
-                    requested_big_bbox = requested_small_bbox.copy()
-
-                    requested_big_bbox['min_lat'] -= 0.5
-                    requested_big_bbox['max_lat'] += 0.5
-                    requested_big_bbox['min_lon'] -= 0.5
-                    requested_big_bbox['max_lon'] += 0.5
-
                     output_file_attributes['city_country_code'] = city['properties']['country']
                     output_file_attributes['city_name'] = city['properties']['name-ASCII']
 
@@ -433,8 +347,7 @@ for filepath in filepaths:
                         + '_' + str(output_file_attributes['city_name']) \
                         + '_' + str(output_file_attributes['platform']) \
                         + '_' + str(output_file_attributes['product_type']) \
-                        + '_' + str(output_file_attributes['sensing_date']) \
-                        + '_' + str(output_file_attributes['band'])
+                        + '_' + str(output_file_attributes['sensing_date'])
 
                     print(output_filename)
 
@@ -453,27 +366,119 @@ for filepath in filepaths:
                                                                                 selected_lons,
                                                                                 selected_vals,
                                                                                 requested_small_bbox)
-
                     if selected_vals is not None:
                         selected_lats, selected_lons, selected_vals = regrid(selected_lats,
                                                                              selected_lons,
                                                                              selected_vals,
                                                                              30)
 
-                        # write_csv(selected_lats, selected_lons, selected_vals, output_filename)
+                        # write_csv(lats, lons, vals, output_filename)
                         write_geotiff(selected_lats, selected_lons, selected_vals, output_filename)
                         # write_png(vals, output_filename)
 
-                partial_elapsed = (time.time() - start)
-                print('Band:', band)
-                print('Partial elapsed time:', str(timedelta(seconds=partial_elapsed)))
-                # print('\033[92mPartial elapsed time:\033[0m', str(timedelta(seconds=partial_elapsed)))
+        elif input_file_attributes[2] == 'L1B':
+            output_file_attributes['platform'] = input_file_attributes[0]
+            output_file_attributes['level'] = input_file_attributes[2]
+            output_file_attributes['product_type'] = input_file_attributes[4]
+            output_file_attributes['sensing_date'] = input_file_attributes[10][:-3]
 
-    partial_elapsed = (time.time() - start)
-    print('File:', file)
-    print('\033[92mPartial elapsed time:\033[0m', str(timedelta(seconds=partial_elapsed)))
-    # print('\033[92mPartial elapsed time:\033[0m', str(timedelta(seconds=partial_elapsed)))
+            if output_file_attributes['product_type'] == 'BD1':
+                ds_obs = ds['/BAND1_RADIANCE/STANDARD_MODE/OBSERVATIONS']
+                ds_geo = ds['/BAND1_RADIANCE/STANDARD_MODE/GEODATA']
+            else:
+                ds_obs = ds['/BAND2_RADIANCE/STANDARD_MODE/OBSERVATIONS']
+                ds_geo = ds['/BAND2_RADIANCE/STANDARD_MODE/GEODATA']
 
-total_elapsed = (time.time() - start)
-print('\033[92mElapsed time:\033[0m', str(timedelta(seconds=total_elapsed)))
-# print('\033[92mElapsed time:\033[0m', str(timedelta(seconds=total_elapsed)))
+            try:
+                bands = ds_obs.variables['radiance'][0, :, :, :]
+            except RuntimeError:
+                pass
+            else:
+                cities_in_file = []
+                for city in cities_list['features']:
+                    city_geojson = {
+                        'type': 'Polygon',
+                        'coordinates':
+                            city['geometry']['coordinates']
+                    }
+                    city_geojson = json.dumps(city_geojson)
+
+                    city_extent = ogr.CreateGeometryFromJson(city_geojson)
+                    intersection = satellite_product_extent.Intersection(city_extent)
+
+                    if intersection.IsEmpty():
+                        pass
+                    else:
+                        cities_in_file.append(city)
+
+                for band in range(bands.shape[2]):
+                    output_file_attributes['band'] = band
+
+                    for city in cities_in_file:
+                        lats = np.ma.copy(ds_geo.variables['latitude'][0, :, :])
+                        lons = np.ma.copy(ds_geo.variables['longitude'][0, :, :])
+                        vals = np.ma.copy(bands[:, :, band])
+
+                        requested_small_bbox = get_polygon_extent(city['geometry']['coordinates'][0])
+                        requested_big_bbox = requested_small_bbox.copy()
+
+                        requested_big_bbox['min_lat'] -= 0.5
+                        requested_big_bbox['max_lat'] += 0.5
+                        requested_big_bbox['min_lon'] -= 0.5
+                        requested_big_bbox['max_lon'] += 0.5
+
+                        output_file_attributes['city_country_code'] = city['properties']['country']
+                        output_file_attributes['city_name'] = city['properties']['name-ASCII']
+
+                        output_filename = str(output_file_attributes['city_country_code']) \
+                            + '_' + str(output_file_attributes['city_name']) \
+                            + '_' + str(output_file_attributes['platform']) \
+                            + '_' + str(output_file_attributes['product_type']) \
+                            + '_' + str(output_file_attributes['sensing_date']) \
+                            + '_' + str(output_file_attributes['band'])
+
+                        print(output_filename)
+
+                        if not os.path.exists(os.path.join(output_dir, output_file_attributes['product_type'])):
+                            os.makedirs(os.path.join(output_dir, output_file_attributes['product_type']))
+
+                        output_filename = os.path.join(output_dir, output_file_attributes['product_type'], output_filename)
+
+                        selected_lats, selected_lons, selected_vals = select_points(lats, lons, vals, requested_big_bbox)
+                        selected_lats, selected_lons, selected_vals = regrid(selected_lats,
+                                                                             selected_lons,
+                                                                             selected_vals,
+                                                                             100)
+
+                        selected_lats, selected_lons, selected_vals = select_points(selected_lats,
+                                                                                    selected_lons,
+                                                                                    selected_vals,
+                                                                                    requested_small_bbox)
+
+                        if selected_vals is not None:
+                            selected_lats, selected_lons, selected_vals = regrid(selected_lats,
+                                                                                 selected_lons,
+                                                                                 selected_vals,
+                                                                                 30)
+
+                            # write_csv(selected_lats, selected_lons, selected_vals, output_filename)
+                            write_geotiff(selected_lats, selected_lons, selected_vals, output_filename)
+                            # write_png(vals, output_filename)
+
+                    partial_elapsed = (time.time() - start)
+                    print('Band:', band)
+                    print('Partial elapsed time:', str(timedelta(seconds=partial_elapsed)))
+                    # print('\033[92mPartial elapsed time:\033[0m', str(timedelta(seconds=partial_elapsed)))
+
+        partial_elapsed = (time.time() - start)
+        print('File:', file)
+        print('\033[92mPartial elapsed time:\033[0m', str(timedelta(seconds=partial_elapsed)))
+        # print('\033[92mPartial elapsed time:\033[0m', str(timedelta(seconds=partial_elapsed)))
+
+    total_elapsed = (time.time() - start)
+    print('\033[92mElapsed time:\033[0m', str(timedelta(seconds=total_elapsed)))
+    # print('\033[92mElapsed time:\033[0m', str(timedelta(seconds=total_elapsed)))
+
+
+if __name__ == "__main__":
+    main()
