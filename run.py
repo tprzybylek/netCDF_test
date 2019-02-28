@@ -1,5 +1,3 @@
-import line_profiler
-
 import os
 import netCDF4 as nC
 import numpy as np
@@ -15,14 +13,12 @@ from datetime import timedelta
 import time
 
 from scipy.misc import imresize
-import pyresample
-import pyproj
-import matplotlib.pyplot as plt
 
 
 def regrid(lats, lons, vals, n):
     nrows, ncols = n, n
 
+    # TODO: Remove depreciated methods
     lons = imresize(lons, (nrows, ncols), interp='bilinear', mode='F')
     lats = imresize(lats, (nrows, ncols), interp='bilinear', mode='F')
     vals = imresize(vals, (nrows, ncols), interp='bicubic', mode='F')
