@@ -1,3 +1,5 @@
+import line_profiler
+
 import os
 import netCDF4 as nC
 import numpy as np
@@ -6,6 +8,7 @@ import csv
 import json
 from osgeo import gdal, osr, ogr
 import struct
+from PIL import Image
 
 from operator import itemgetter
 from datetime import timedelta
@@ -290,13 +293,12 @@ for filepath in filepaths:
                                                                             selected_lons,
                                                                             selected_vals,
                                                                             requested_small_bbox)
+                if selected_vals is not None:
+                    selected_lats, selected_lons, selected_vals = regrid(selected_lats,
+                                                                         selected_lons,
+                                                                         selected_vals,
+                                                                         30)
 
-                selected_lats, selected_lons, selected_vals = regrid(selected_lats,
-                                                                     selected_lons,
-                                                                     selected_vals,
-                                                                     30)
-
-                if vals is not None:
                     # write_csv(lats, lons, vals, output_filename)
                     write_geotiff(selected_lats, selected_lons, selected_vals, output_filename)
                     # write_png(vals, output_filename)
@@ -394,7 +396,7 @@ for filepath in filepaths:
                 print('\033[92mBand:\033[0m', band)
                 print('\033[92mPartial elapsed time:\033[0m', str(timedelta(seconds=partial_elapsed)))
 
-    ds.close()
+        # ds.close()
 
     partial_elapsed = (time.time() - start)
     print('File:', file)
