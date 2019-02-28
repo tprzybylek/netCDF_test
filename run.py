@@ -6,7 +6,7 @@ import csv
 import json
 from osgeo import gdal, osr, ogr
 import struct
-from PIL import Image
+# from PIL import Image
 
 from operator import itemgetter
 from datetime import timedelta
@@ -20,7 +20,6 @@ from scipy.misc import imresize
 # Run
 # python "C:\Users\SR-CleanRoom\AppData\Local\Programs\Python\Python37\Scripts\kernprof.exe" -l -v run.py
 #
-
 
 def regrid(latitudes, longitudes, values, n):
     """
@@ -136,7 +135,6 @@ def write_geotiff(latitudes, longitudes, values, filename):
     projection.ImportFromEPSG(4326)
     projection_wkt = projection.ExportToWkt()
     dataset.SetProjection(projection_wkt)
-    # geo_transform = gdal.GCPsToGeoTransform(gcp_list)
     dataset.SetGeoTransform(geo_transform)
     dataset.GetRasterBand(1).WriteArray(values)
     dataset = None
@@ -306,15 +304,15 @@ def main():
 
                 if output_file_attributes['product_type'] == 'CLOUD':
                     vals = np.ma.copy(ds.variables['cloud_optical_thickness'][0, :, :])
-                    vals_units = ds.variables['cloud_optical_thickness'].units
+                    # vals_units = ds.variables['cloud_optical_thickness'].units
                     output_file_attributes['sensing_date'] = input_file_attributes[7]
                 elif output_file_attributes['product_type'] == 'SO2':
                     vals = np.ma.copy(ds.variables['sulfurdioxide_total_vertical_column'][0, :, :])
-                    vals_units = ds.variables['sulfurdioxide_total_vertical_column'].units
+                    # vals_units = ds.variables['sulfurdioxide_total_vertical_column'].units
                     output_file_attributes['sensing_date'] = input_file_attributes[9]
                 elif output_file_attributes['product_type'] == 'O3':
                     vals = np.ma.copy(ds.variables['ozone_total_vertical_column'][0, :, :])
-                    vals_units = ds.variables['ozone_total_vertical_column'].units
+                    # vals_units = ds.variables['ozone_total_vertical_column'].units
                     output_file_attributes['sensing_date'] = input_file_attributes[10]
                 else:
                     vals = None
@@ -442,9 +440,15 @@ def main():
                         if not os.path.exists(os.path.join(output_dir, output_file_attributes['product_type'])):
                             os.makedirs(os.path.join(output_dir, output_file_attributes['product_type']))
 
-                        output_filename = os.path.join(output_dir, output_file_attributes['product_type'], output_filename)
+                        output_filename = os.path.join(output_dir,
+                                                       output_file_attributes['product_type'],
+                                                       output_filename)
 
-                        selected_lats, selected_lons, selected_vals = select_points(lats, lons, vals, requested_big_bbox)
+                        selected_lats, selected_lons, selected_vals = select_points(lats,
+                                                                                    lons,
+                                                                                    vals,
+                                                                                    requested_big_bbox)
+
                         selected_lats, selected_lons, selected_vals = regrid(selected_lats,
                                                                              selected_lons,
                                                                              selected_vals,
