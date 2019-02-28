@@ -14,23 +14,53 @@ import time
 
 from scipy.misc import imresize
 
+# Code profiling
+#
+# Add a @profile decorator before function definition
+# Run
+# python "C:\Users\SR-CleanRoom\AppData\Local\Programs\Python\Python37\Scripts\kernprof.exe" -l -v run.py
+#
 
-def regrid(lats, lons, vals, n):
+
+def regrid(latitudes, longitudes, values, n):
+    """
+    Resamples input arrays to a (n, n)-sized array.
+
+    :param latitudes:
+    :param longitudes:
+    :param values:
+    :param n:
+    :return:
+    """
+
     nrows, ncols = n, n
 
-    # TODO: Remove depreciated methods
-    lons = imresize(lons, (nrows, ncols), interp='bilinear', mode='F')
-    lats = imresize(lats, (nrows, ncols), interp='bilinear', mode='F')
-    vals = imresize(vals, (nrows, ncols), interp='bicubic', mode='F')
+    # TODO: Remove deprecated methods
+    longitudes = imresize(longitudes, (nrows, ncols), interp='bilinear', mode='F')
+    latitudes = imresize(latitudes, (nrows, ncols), interp='bilinear', mode='F')
+    values = imresize(values, (nrows, ncols), interp='bicubic', mode='F')
 
-    # plt.imshow(vals)
-    # plt.show()
-
-    return lats, lons, vals
+    return longitudes, latitudes, values
 
 
 def select_points(latitudes, longitudes, values, polygon_extent):
+    """
+    Selects points which are inside of the requested polygon_extent. Returns arrays clipped to the extent.
+
+    :param latitudes:
+    :param longitudes:
+    :param values:
+    :param polygon_extent:
+    :return:
+    """
+
     def clip_masked_array(arr):
+        """
+        Clips array to the unmasked cells. Returns clipped array.
+
+        :param arr:
+        :return:
+        """
         si, se = np.where(~arr.mask)
         arr = arr[si.min():si.max() + 1, se.min():se.max() + 1]
         return arr
@@ -52,9 +82,6 @@ def select_points(latitudes, longitudes, values, polygon_extent):
     longitudes.mask = selected_latitudes_longitudes
     values.mask = selected_latitudes_longitudes
 
-    # plt.imshow(latitudes)
-    # plt.show()
-
     i = np.where(~latitudes.mask)
 
     if i[0].size > 4:
@@ -72,6 +99,17 @@ def select_points(latitudes, longitudes, values, polygon_extent):
 
 
 def write_geotiff(latitudes, longitudes, values, filename):
+    """
+    Writes input array as a GeoTIFF file to disk. Requires latitudes and longitudes arrays to
+    calculate the georeference.
+
+    :param latitudes:
+    :param longitudes:
+    :param values:
+    :param filename:
+    :return:
+    """
+
     filename += '.tiff'
     real_bbox = {'max_lon': np.max(longitudes),
                  'min_lon': np.min(longitudes),
@@ -105,6 +143,15 @@ def write_geotiff(latitudes, longitudes, values, filename):
 
 
 def write_csv(latitudes, longitudes, values, filename):
+    """
+    Writes the input array as a CSV file to disk.
+    :param latitudes:
+    :param longitudes:
+    :param values:
+    :param filename:
+    :return:
+    """
+
     filename += '.csv'
     rows = zip(latitudes.ravel(), longitudes.ravel(), values.ravel())
 
@@ -115,6 +162,13 @@ def write_csv(latitudes, longitudes, values, filename):
 
 
 def write_png(values, filename):
+    """
+    Writes the input float32 array as a 16-bit double channel PNG.
+    :param values:
+    :param filename:
+    :return:
+    """
+
     filename += '.png'
 
     def float_to_split_hex(float_variable):
@@ -143,6 +197,11 @@ def write_png(values, filename):
 
 
 def read_png(filename):
+    """
+    Reads the input double-channel 16-bit PNG file as a float32 array.
+    :param filename:
+    :return:
+    """
     filename += '.png'
     reader = png.Reader(filename).asDirect()
     values = []
@@ -161,6 +220,11 @@ def read_png(filename):
 
 
 def get_product_extent(nc_dataset):
+    """
+    Calculates the product extent from the NetCDF metadata. Returns a GeoJSON polygon feature.
+    :param nc_dataset:
+    :return:
+    """
     nc_dataset_gml = nc_dataset[
         'METADATA/EOP_METADATA/om:featureOfInterest/eop:multiExtentOf/gml:surfaceMembers/gml:exterior'
     ]
@@ -186,6 +250,13 @@ def get_product_extent(nc_dataset):
 
 
 def get_polygon_extent(polygon_coordinates):
+    """
+    Calculates a bounding box from a list of coordinates.
+
+    :param polygon_coordinates:
+    :return:
+    """
+
     polygon_bbox = {
         'max_lat': max(polygon_coordinates, key=itemgetter(1))[1],
         'min_lat': min(polygon_coordinates, key=itemgetter(1))[1],
@@ -197,9 +268,14 @@ def get_polygon_extent(polygon_coordinates):
 
 start = time.time()
 
+# Use if images are in the 'CURRENT_DIR/data/' directory
+# current_dir = os.path.dirname(os.path.abspath(__file__))
 current_dir = 'D:\\'
-# current_dir = os.path.dirname(os.path.abspath(__file__))  # Use if images are in the 'data' directory in the local dir
+
+# CURRENT_DIR/data/input/ <- put the input *.nc files here
 input_dir = os.path.join(current_dir, 'data', 'input')
+
+# CURRENT_DIR/data/output/ <- output files are saved here
 output_dir = os.path.join(current_dir, 'data', 'output')
 
 filepaths = [os.path.join(input_dir, file) for file in os.listdir(input_dir)]
@@ -389,15 +465,15 @@ for filepath in filepaths:
                         # write_png(vals, output_filename)
 
                 partial_elapsed = (time.time() - start)
-                print('\033[92mBand:\033[0m', band)
-                print('\033[92mPartial elapsed time:\033[0m', str(timedelta(seconds=partial_elapsed)))
-
-        # ds.close()
+                print('Band:', band)
+                print('Partial elapsed time:', str(timedelta(seconds=partial_elapsed)))
+                # print('\033[92mPartial elapsed time:\033[0m', str(timedelta(seconds=partial_elapsed)))
 
     partial_elapsed = (time.time() - start)
     print('File:', file)
     print('\033[92mPartial elapsed time:\033[0m', str(timedelta(seconds=partial_elapsed)))
-
+    # print('\033[92mPartial elapsed time:\033[0m', str(timedelta(seconds=partial_elapsed)))
 
 total_elapsed = (time.time() - start)
 print('\033[92mElapsed time:\033[0m', str(timedelta(seconds=total_elapsed)))
+# print('\033[92mElapsed time:\033[0m', str(timedelta(seconds=total_elapsed)))
