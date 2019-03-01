@@ -33,13 +33,9 @@ def regrid(latitudes, longitudes, values, n):
     :return:
     """
 
-    # TODO: Remove deprecated methods
     latitudes = np.array(Image.fromarray(latitudes).resize((n, n), Image.BILINEAR))
     longitudes = np.array(Image.fromarray(longitudes).resize((n, n), Image.BILINEAR))
     values = np.array(Image.fromarray(values).resize((n, n), Image.BICUBIC))
-    # latitudes = imresize(latitudes, (nrows, ncols), interp='bilinear', mode='F')
-    # longitudes = imresize(longitudes, (nrows, ncols), interp='bilinear', mode='F')
-    # values = imresize(values, (nrows, ncols), interp='bicubic', mode='F')
 
     return latitudes, longitudes, values
 
@@ -63,18 +59,19 @@ def select_points(latitudes, longitudes, values, polygon_extent):
         :return:
         """
         si, se = np.where(~arr.mask)
-        arr = arr[si.min():si.max() + 1, se.min():se.max() + 1]
-        return arr
+        if si.size > 4:
+            arr = arr[si.min():si.max() + 1, se.min():se.max() + 1]
+            return arr
+        else:
+            return None
 
     if type(values) == np.ndarray:
         latitudes = np.ma.MaskedArray(latitudes)
         longitudes = np.ma.MaskedArray(longitudes)
         values = np.ma.MaskedArray(values)
 
-    selected_latitudes = np.logical_and(latitudes > polygon_extent['min_lat'],
-                                        latitudes < polygon_extent['max_lat'])
-    selected_longitudes = np.logical_and(longitudes > polygon_extent['min_lon'],
-                                         longitudes < polygon_extent['max_lon'])
+    selected_latitudes = np.logical_and(latitudes > polygon_extent['min_lat'], latitudes < polygon_extent['max_lat'])
+    selected_longitudes = np.logical_and(longitudes > polygon_extent['min_lon'], longitudes < polygon_extent['max_lon'])
 
     selected_latitudes_longitudes = np.logical_and(selected_latitudes, selected_longitudes)
     selected_latitudes_longitudes = np.invert(np.asarray(selected_latitudes_longitudes))
@@ -83,10 +80,8 @@ def select_points(latitudes, longitudes, values, polygon_extent):
     longitudes.mask = selected_latitudes_longitudes
     values.mask = selected_latitudes_longitudes
 
-    i = np.where(~latitudes.mask)
-
-    if i[0].size > 4:
-        latitudes = clip_masked_array(latitudes)
+    latitudes = clip_masked_array(latitudes)
+    if latitudes is not None:
         longitudes = clip_masked_array(longitudes)
         values = clip_masked_array(values)
 
@@ -99,7 +94,7 @@ def select_points(latitudes, longitudes, values, polygon_extent):
         return None, None, None
 
 
-def write_geotiff(latitudes, longitudes, values, filename):
+def write_geotiff(values, filename, bbox):
     """
     Writes input array as a GeoTIFF file to disk. Requires latitudes and longitudes arrays to
     calculate the georeference.
@@ -112,19 +107,19 @@ def write_geotiff(latitudes, longitudes, values, filename):
     """
 
     filename += '.tiff'
-    real_bbox = {'max_lon': np.max(longitudes),
-                 'min_lon': np.min(longitudes),
-                 'max_lat': np.max(latitudes),
-                 'min_lat': np.min(latitudes),
-                 }
+    # real_bbox = {'max_lon': np.max(longitudes),
+    #              'min_lon': np.min(longitudes),
+    #              'max_lat': np.max(latitudes),
+    #              'min_lat': np.min(latitudes),
+    #              }
 
-    pixel_width = (real_bbox['max_lon'] - real_bbox['min_lon']) / longitudes.shape[1]
-    pixel_height = (real_bbox['max_lat'] - real_bbox['min_lat']) / longitudes.shape[0]
+    pixel_width = (bbox['max_lon'] - bbox['min_lon']) / values.shape[1]
+    pixel_height = (bbox['max_lat'] - bbox['min_lat']) / values.shape[0]
 
-    geo_transform = (real_bbox['min_lon'] - 0.5 * pixel_width,
+    geo_transform = (bbox['min_lon'] - 0.5 * pixel_width,
                      pixel_width,
                      0,
-                     real_bbox['max_lat'] + 0.5 * pixel_height,
+                     bbox['max_lat'] + 0.5 * pixel_height,
                      0,
                      -pixel_height
                      )
@@ -139,7 +134,7 @@ def write_geotiff(latitudes, longitudes, values, filename):
     dataset.SetProjection(projection_wkt)
     dataset.SetGeoTransform(geo_transform)
     dataset.GetRasterBand(1).WriteArray(values)
-    dataset = None
+    # dataset = None
 
 
 def write_csv(latitudes, longitudes, values, filename):
@@ -278,6 +273,8 @@ def main():
 
     # CURRENT_DIR/data/output/ <- output files are saved here
     output_dir = os.path.join(current_dir, 'data', 'output')
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
 
     filepaths = [os.path.join(input_dir, file) for file in os.listdir(input_dir)]
 
@@ -300,21 +297,17 @@ def main():
             output_file_attributes['product_type'] = input_file_attributes[4]
             output_file_attributes['sensing_date'] = input_file_attributes[7]
 
+            lats = ds.variables['latitude'][0, :, :]
+            lons = ds.variables['longitude'][0, :, :]
             for city in cities_list['features']:
-                lons = np.ma.copy(ds.variables['longitude'][0, :, :])
-                lats = np.ma.copy(ds.variables['latitude'][0, :, :])
-
                 if output_file_attributes['product_type'] == 'CLOUD':
                     vals = np.ma.copy(ds.variables['cloud_optical_thickness'][0, :, :])
-                    # vals_units = ds.variables['cloud_optical_thickness'].units
                     output_file_attributes['sensing_date'] = input_file_attributes[7]
                 elif output_file_attributes['product_type'] == 'SO2':
-                    vals = np.ma.copy(ds.variables['sulfurdioxide_total_vertical_column'][0, :, :])
-                    # vals_units = ds.variables['sulfurdioxide_total_vertical_column'].units
+                    vals = ds.variables['sulfurdioxide_total_vertical_column'][0, :, :]
                     output_file_attributes['sensing_date'] = input_file_attributes[9]
                 elif output_file_attributes['product_type'] == 'O3':
                     vals = np.ma.copy(ds.variables['ozone_total_vertical_column'][0, :, :])
-                    # vals_units = ds.variables['ozone_total_vertical_column'].units
                     output_file_attributes['sensing_date'] = input_file_attributes[10]
                 else:
                     vals = None
@@ -356,25 +349,18 @@ def main():
 
                     output_filename = os.path.join(output_dir, output_file_attributes['product_type'], output_filename)
 
-                    selected_lats, selected_lons, selected_vals = select_points(lats, lons, vals, requested_big_bbox)
-                    selected_lats, selected_lons, selected_vals = regrid(selected_lats,
-                                                                         selected_lons,
-                                                                         selected_vals,
-                                                                         100)
+                    slats, slons, svals = select_points(lats, lons, vals, requested_big_bbox)
 
-                    selected_lats, selected_lons, selected_vals = select_points(selected_lats,
-                                                                                selected_lons,
-                                                                                selected_vals,
-                                                                                requested_small_bbox)
-                    if selected_vals is not None:
-                        selected_lats, selected_lons, selected_vals = regrid(selected_lats,
-                                                                             selected_lons,
-                                                                             selected_vals,
-                                                                             30)
+                    if svals is not None:
+                        slats, slons, svals = regrid(slats, slons, svals, 100)
+                        slats, slons, svals = select_points(slats, slons, svals, requested_small_bbox)
 
-                        # write_csv(lats, lons, vals, output_filename)
-                        write_geotiff(selected_lats, selected_lons, selected_vals, output_filename)
-                        # write_png(vals, output_filename)
+                    if svals is not None:
+                        slats, slons, svals = regrid(slats, slons, svals, 30)
+
+                        # write_csv(slats, slons, svals, output_filename)
+                        write_geotiff(svals, output_filename, requested_small_bbox)
+                        # write_png(svals, output_filename)
 
         elif input_file_attributes[2] == 'L1B':
             output_file_attributes['platform'] = input_file_attributes[0]
@@ -411,13 +397,13 @@ def main():
                     else:
                         cities_in_file.append(city)
 
+                lats = ds_geo.variables['latitude'][0, :, :]
+                lons = ds_geo.variables['longitude'][0, :, :]
                 for band in range(bands.shape[2]):
                     output_file_attributes['band'] = band
 
                     for city in cities_in_file:
-                        lats = np.ma.copy(ds_geo.variables['latitude'][0, :, :])
-                        lons = np.ma.copy(ds_geo.variables['longitude'][0, :, :])
-                        vals = np.ma.copy(bands[:, :, band])
+                        vals = bands[:, :, band]
 
                         requested_small_bbox = get_polygon_extent(city['geometry']['coordinates'][0])
                         requested_big_bbox = requested_small_bbox.copy()
@@ -446,30 +432,18 @@ def main():
                                                        output_file_attributes['product_type'],
                                                        output_filename)
 
-                        selected_lats, selected_lons, selected_vals = select_points(lats,
-                                                                                    lons,
-                                                                                    vals,
-                                                                                    requested_big_bbox)
+                        slats, slons, svals = select_points(lats, lons, vals, requested_big_bbox)
 
-                        selected_lats, selected_lons, selected_vals = regrid(selected_lats,
-                                                                             selected_lons,
-                                                                             selected_vals,
-                                                                             100)
+                        if svals is not None:
+                            slats, slons, svals = regrid(slats, slons, svals, 100)
+                            slats, slons, svals = select_points(slats, slons, svals, requested_small_bbox)
 
-                        selected_lats, selected_lons, selected_vals = select_points(selected_lats,
-                                                                                    selected_lons,
-                                                                                    selected_vals,
-                                                                                    requested_small_bbox)
+                        if svals is not None:
+                            slats, slons, svals = regrid(slats, slons, svals, 30)
 
-                        if selected_vals is not None:
-                            selected_lats, selected_lons, selected_vals = regrid(selected_lats,
-                                                                                 selected_lons,
-                                                                                 selected_vals,
-                                                                                 30)
-
-                            # write_csv(selected_lats, selected_lons, selected_vals, output_filename)
-                            write_geotiff(selected_lats, selected_lons, selected_vals, output_filename)
-                            # write_png(vals, output_filename)
+                            # write_csv(slats, slons, svals, output_filename)
+                            write_geotiff(svals, output_filename, requested_small_bbox)
+                            # write_png(svals, output_filename)
 
                     partial_elapsed = (time.time() - start)
                     print('Band:', band)
@@ -478,13 +452,14 @@ def main():
 
         partial_elapsed = (time.time() - start)
         print('File:', file)
-        print('\033[92mPartial elapsed time:\033[0m', str(timedelta(seconds=partial_elapsed)))
+        print('Partial elapsed time:', str(timedelta(seconds=partial_elapsed)))
         # print('\033[92mPartial elapsed time:\033[0m', str(timedelta(seconds=partial_elapsed)))
 
     total_elapsed = (time.time() - start)
-    print('\033[92mElapsed time:\033[0m', str(timedelta(seconds=total_elapsed)))
+    print('Elapsed time:', str(timedelta(seconds=total_elapsed)))
     # print('\033[92mElapsed time:\033[0m', str(timedelta(seconds=total_elapsed)))
 
 
 if __name__ == "__main__":
     main()
+    # input("Press Enter to continue...")
