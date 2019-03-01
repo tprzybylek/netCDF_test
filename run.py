@@ -6,13 +6,13 @@ import csv
 import json
 from osgeo import gdal, osr, ogr
 import struct
-# from PIL import Image
+from PIL import Image
 
 from operator import itemgetter
 from datetime import timedelta
 import time
 
-from scipy.misc import imresize
+# from scipy.misc import imresize
 
 # For code profiling
 #
@@ -20,6 +20,7 @@ from scipy.misc import imresize
 # Run
 # python "C:\Users\SR-CleanRoom\AppData\Local\Programs\Python\Python37\Scripts\kernprof.exe" -l -v run.py
 #
+
 
 def regrid(latitudes, longitudes, values, n):
     """
@@ -32,14 +33,15 @@ def regrid(latitudes, longitudes, values, n):
     :return:
     """
 
-    nrows, ncols = n, n
-
     # TODO: Remove deprecated methods
-    longitudes = imresize(longitudes, (nrows, ncols), interp='bilinear', mode='F')
-    latitudes = imresize(latitudes, (nrows, ncols), interp='bilinear', mode='F')
-    values = imresize(values, (nrows, ncols), interp='bicubic', mode='F')
+    latitudes = np.array(Image.fromarray(latitudes).resize((n, n), Image.BILINEAR))
+    longitudes = np.array(Image.fromarray(longitudes).resize((n, n), Image.BILINEAR))
+    values = np.array(Image.fromarray(values).resize((n, n), Image.BICUBIC))
+    # latitudes = imresize(latitudes, (nrows, ncols), interp='bilinear', mode='F')
+    # longitudes = imresize(longitudes, (nrows, ncols), interp='bilinear', mode='F')
+    # values = imresize(values, (nrows, ncols), interp='bicubic', mode='F')
 
-    return longitudes, latitudes, values
+    return latitudes, longitudes, values
 
 
 def select_points(latitudes, longitudes, values, polygon_extent):
